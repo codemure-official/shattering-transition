@@ -1,0 +1,670 @@
+<!doctype html>
+<!-- README: Shattering page transition — click any nav link or button and the page breaks like glass into the next one. Keys: Space = next page · R = reset · M = sound · H = hide UI. Add ?slow=4 to the URL for slow-motion. Vanilla HTML/CSS/JS, no libraries. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Shattering Page Transition · Aurelia</title>
+<style>
+/* ════════════════════════════════════════════════════════════════
+   1. BASE
+   ════════════════════════════════════════════════════════════════ */
+:root{
+  --gold-1:#f7e6a8; --gold-2:#d6ab4a; --gold-3:#8d6620;
+  --serif:"Bodoni MT","Didot","Playfair Display","Cormorant Garamond",Georgia,"Times New Roman",serif;
+  --sans:"Inter","Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --ts:1;                       /* slow-motion multiplier (set from ?slow=) */
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:#050807;font-family:var(--sans);
+  -webkit-font-smoothing:antialiased;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+a{color:inherit;text-decoration:none}
+ul{list-style:none}
+.defs{position:absolute;width:0;height:0}   /* shared SVG gradients/symbols (must stay rendered, never display:none) */
+
+/* ════════════════════════════════════════════════════════════════
+   2. THE FAKE STORE  (.app is the "screen" that gets shattered)
+   Three colour themes so each page change is a big, obvious reveal.
+   ════════════════════════════════════════════════════════════════ */
+.app{position:fixed;inset:0;overflow:hidden;z-index:1;background:var(--bg);color:var(--ink);
+  --nav-h:132px;--accent:var(--gold-2);
+  --ink:#f4ede1;--muted:rgba(244,237,225,.68);--bg:#07120f;--line:rgba(244,237,225,.18);--card:rgba(255,255,255,.05)}
+.app[data-theme=light]{--ink:#1e1b16;--muted:rgba(30,27,22,.64);--bg:#f3ece0;--line:rgba(30,27,22,.16);--card:#fffaf0;--accent:#a97c25}
+.app[data-theme=wine]{--ink:#f7ece5;--muted:rgba(247,236,229,.68);--bg:#1a0a10;--line:rgba(247,236,229,.18);--card:rgba(255,255,255,.06)}
+
+.app:not(.ready){opacity:0}   /* revealed once photos are decoded (see JS) */
+
+/* nav */
+.nav{position:absolute;z-index:5;top:0;left:0;right:0;display:grid;grid-template-columns:1fr auto;align-items:center;
+  row-gap:12px;padding:20px 22px 24px;background:linear-gradient(var(--bg) 66%,transparent)}
+.logo{grid-area:1/1;display:flex;align-items:center;gap:10px;font-family:var(--serif);font-size:21px;letter-spacing:.34em;text-transform:uppercase}
+.logo svg{width:20px;height:20px}
+.bag{grid-area:1/2;position:relative;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--line)}
+.bag svg{width:18px;height:18px}
+.bag b{position:absolute;top:-2px;right:-2px;min-width:17px;height:17px;border-radius:9px;background:var(--gold-2);color:#2a1d06;font-size:10px;display:grid;place-items:center}
+.links{grid-area:2/1/3/3;display:flex;justify-content:center;gap:6px}
+.links a{padding:10px 16px;border-radius:999px;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.links a:hover,.links a.is-hover{color:var(--ink)}
+.links a[aria-current=page]{color:var(--ink);box-shadow:inset 0 0 0 1px var(--accent)}
+
+/* pages: each one is its own scroller; only .active is visible */
+.page{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;visibility:hidden;scrollbar-width:none}
+.page::-webkit-scrollbar{display:none}
+.page.active{visibility:visible}
+.page-inner{position:relative;min-height:100%;max-width:1280px;margin:0 auto;padding:calc(var(--nav-h) + 6px) 22px 34px;transform-origin:50% 35%}
+
+/* type */
+h1,h2,h3{font-family:var(--serif);font-weight:400;line-height:1.02;letter-spacing:-.015em}
+h1{font-size:clamp(50px,14.4vw,62px)}
+h2{font-size:clamp(42px,11.5vw,54px)}
+h1 em,h2 em{font-style:italic;background:linear-gradient(100deg,var(--gold-1),var(--gold-2) 50%,var(--gold-3));-webkit-background-clip:text;background-clip:text;color:transparent;padding-right:.06em}
+.eyebrow{font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:var(--accent);font-weight:600}
+.lede{font-size:15.5px;line-height:1.6;color:var(--muted);max-width:46ch}
+
+/* buttons / chips */
+.btn{display:inline-flex;align-items:center;justify-content:center;padding:16px 22px;border-radius:999px;font-size:12px;
+  letter-spacing:.11em;text-transform:uppercase;font-weight:650;transition:transform .2s,filter .2s}
+.btn.primary{background:linear-gradient(135deg,#f6e19b,#d3a645 55%,#a87b2a);color:#2a1d06;
+  box-shadow:0 12px 30px -10px rgba(214,171,74,.6),inset 0 1px 0 rgba(255,255,255,.55)}
+.btn.ghost{box-shadow:inset 0 0 0 1px var(--line);color:var(--ink)}
+.btn:hover,.btn.is-hover{transform:translateY(-2px);filter:brightness(1.07)}
+.cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:10px 15px;border-radius:999px;font-size:12px;letter-spacing:.06em;color:var(--muted);box-shadow:inset 0 0 0 1px var(--line)}
+.chip.on{color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--accent);background:rgba(214,171,74,.12)}
+
+/* ── Home ── */
+.page[data-page=home]{background:
+  radial-gradient(120% 55% at 85% 30%,#12382d 0%,rgba(18,56,45,0) 62%),
+  radial-gradient(100% 45% at 0% 100%,#0f2d24 0%,rgba(15,45,36,0) 60%),#07120f}
+/* The hero photo sits behind the copy; its dark top fades into the page so text stays readable */
+.home{display:flex;flex-direction:column;justify-content:space-between;gap:24px}
+.home h1{margin:14px 0}
+.home-copy,.perks{position:relative;z-index:1}
+.home-art{position:absolute;left:0;right:0;bottom:64px;height:min(70%,760px);z-index:0;
+  background:url(img/hero.webp) no-repeat 50% 100%/128% auto;
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 34%,#000 84%,transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 34%,#000 84%,transparent 100%)}
+.perks{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding-top:14px;border-top:1px solid var(--line)}
+.perks li{display:flex;flex-direction:column;gap:3px;font-size:11px;line-height:1.35;color:var(--muted)}
+.perks b{font-size:11.5px;color:var(--ink);font-weight:600;letter-spacing:.04em}
+
+/* ── Collection ── */
+.page[data-page=collection]{background:radial-gradient(90% 40% at 50% 0%,#fffaf0,rgba(255,250,240,0) 70%),#f3ece0}
+.page-head{display:flex;flex-direction:column;gap:12px;margin-bottom:18px}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:20px}
+.card{display:block;position:relative;border-radius:20px;background:var(--card);padding:10px 10px 15px;
+  box-shadow:0 0 0 1px var(--line),0 20px 40px -28px rgba(70,45,10,.5);transition:transform .25s}
+.card:hover,.card.is-hover{transform:translateY(-4px)}
+.tile{border-radius:14px;aspect-ratio:1/1;background:#e8dcc6 center/cover no-repeat}   /* product photo per card */
+.t1{background-image:url(img/c1.webp)}.t2{background-image:url(img/c2.webp)}.t3{background-image:url(img/c3.webp)}
+.t4{background-image:url(img/c4.webp)}.t5{background-image:url(img/c5.webp)}.t6{background-image:url(img/c6.webp)}
+.card h3{font-size:17px;margin:12px 4px 3px}
+.card p{font-size:13px;color:var(--muted);margin:0 4px}
+.tag{position:absolute;top:18px;left:18px;font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;padding:5px 9px;border-radius:99px;background:rgba(255,255,255,.85);color:#1e1b16}
+
+/* ── Product ── */
+.page[data-page=product]{background:
+  radial-gradient(90% 46% at 50% 22%,#58192f 0%,rgba(88,25,47,0) 70%),
+  radial-gradient(70% 40% at 100% 100%,#2d1019,rgba(45,16,25,0) 70%),#1a0a10}
+.product{display:grid;gap:4px}
+.pdp-art{position:relative;height:min(46vh,430px);margin:0 -22px;
+  background:url(img/product.webp) no-repeat 50% 46%/124% auto;
+  -webkit-mask-image:radial-gradient(closest-side at 50% 50%,#000 60%,transparent 100%);mask-image:radial-gradient(closest-side at 50% 50%,#000 60%,transparent 100%)}   /* photo melts into the page */
+.product h2{margin:10px 0 6px}
+.rating{font-size:12px;color:var(--muted);letter-spacing:.04em}
+.rating i{color:var(--gold-2);font-style:normal;letter-spacing:.12em}
+.price{font-family:var(--serif);font-size:30px;margin:8px 0 10px}
+.opt{margin-top:16px}
+.opt h4{font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:9px}
+.dot{display:inline-block;width:11px;height:11px;border-radius:50%;background:var(--c);margin-right:8px;vertical-align:-1px;box-shadow:0 0 0 1px rgba(255,255,255,.35)}
+
+/* ── Page entrance ("settle"): runs on the NEW page while the shards fall away ── */
+@keyframes settle{from{transform:scale(1.07)}to{transform:scale(1)}}
+@keyframes rise{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:none}}
+.page.settle .page-inner{animation:settle calc(.95s*var(--ts)) cubic-bezier(.16,1,.3,1) backwards}
+.page.settle .rise{animation:rise calc(.75s*var(--ts)) cubic-bezier(.2,.8,.2,1) backwards;
+  animation-delay:calc((var(--i,0)*70ms + 60ms)*var(--ts))}
+
+/* ── Desktop layout ── */
+@media (min-width:900px){
+  .app{--nav-h:104px}
+  .nav{grid-template-columns:1fr auto 1fr;padding:26px 56px 30px}
+  .links{grid-area:1/2}.bag{grid-area:1/3;justify-self:end}
+  .page-inner{padding:calc(var(--nav-h) + 10px) 56px 48px}
+  .lede{font-size:17px}
+  h1{font-size:clamp(72px,8vw,124px)}
+  h2{font-size:clamp(54px,5.5vw,84px)}
+  .home{display:grid;grid-template-columns:1.05fr .95fr;grid-template-rows:1fr auto;align-items:center;column-gap:40px;min-height:100%}
+  .home-copy{grid-area:1/1}.perks{grid-area:2/1/3/3}
+  .home-art{position:relative;grid-area:1/2;height:min(72vh,680px);background-size:auto 165%;background-position:50% 100%;
+    -webkit-mask-image:radial-gradient(closest-side at 50% 56%,#000 62%,transparent 100%);mask-image:radial-gradient(closest-side at 50% 56%,#000 62%,transparent 100%)}
+  .grid{grid-template-columns:repeat(3,1fr);gap:22px}
+  .page-head{flex-direction:row;align-items:flex-end;justify-content:space-between}
+  .product{grid-template-columns:1fr 1fr;column-gap:64px;align-items:center;min-height:100%}
+  .pdp-art{grid-row:1/12;height:min(70vh,640px);margin:0;background-size:cover;background-position:50% 50%}
+}
+
+/* ════════════════════════════════════════════════════════════════
+   3. SHATTER OVERLAY
+   ════════════════════════════════════════════════════════════════ */
+#shards{position:fixed;inset:0;z-index:10;pointer-events:none;overflow:hidden;perspective:1100px}
+#shards[hidden]{display:none}
+.shard{position:absolute;overflow:hidden;contain:strict;will-change:transform,opacity}  /* one shard = tiny clipped copy of the screen */
+.fx{position:absolute;inset:0;opacity:0;pointer-events:none}                              /* glass sheen + bright edge, fades in when the shard breaks free */
+.fx svg{position:absolute;inset:0}
+.crack{position:absolute;inset:0;width:100%;height:100%;z-index:2}
+
+/* ════════════════════════════════════════════════════════════════
+   4. DEMO HUD (sound toggle + hint). Press H to hide for clean takes.
+   ════════════════════════════════════════════════════════════════ */
+.hud{position:fixed;z-index:20;right:12px;bottom:12px}
+.snd{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:rgba(10,10,10,.5);color:#fff;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.25);opacity:.7}
+.snd svg{width:18px;height:18px}
+.snd[aria-pressed=true]{background:var(--gold-2);color:#2a1d06;opacity:1}
+.snd[aria-pressed=false] .on,.snd[aria-pressed=true] .off{display:none}
+.hint{display:none;position:fixed;z-index:20;left:14px;bottom:14px;font-size:11px;letter-spacing:.06em;color:rgba(255,255,255,.75);
+  background:rgba(0,0,0,.5);padding:8px 13px;border-radius:99px}
+@media (hover:hover) and (min-width:900px){.hint{display:block}}
+.clean .hud,.clean .hint{display:none}
+</style>
+</head>
+<body>
+
+<!-- Shared SVG art: gradients + jewellery symbols, reused with <use> so DOM clones stay light -->
+<svg class="defs" width="0" height="0" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fbeab0"/><stop offset=".35" stop-color="#dcae4e"/><stop offset=".68" stop-color="#9a6f22"/><stop offset="1" stop-color="#f0d27e"/></linearGradient>
+  </defs>
+</svg>
+
+<!-- ═══════════ THE STORE (this whole element is what shatters) ═══════════ -->
+<div id="app" class="app" data-theme="dark">
+
+  <header class="nav">
+    <a class="logo hv" href="#home" data-go="home">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 21 9 12 22 3 9Z" fill="url(#gold)"/><path d="M3 9h18M8.5 9 12 2l3.5 7M8.5 9 12 22l3.5-13" fill="none" stroke="rgba(0,0,0,.35)" stroke-width=".8"/></svg>
+      Aurelia
+    </a>
+    <nav class="links" aria-label="Main">
+      <a class="hv" href="#home" data-go="home" aria-current="page">Home</a>
+      <a class="hv" href="#collection" data-go="collection">Collection</a>
+      <a class="hv" href="#product" data-go="product">The Ring</a>
+    </nav>
+    <button class="bag hv" aria-label="Bag">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1 12H6L5 8Z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg><b>2</b>
+    </button>
+  </header>
+
+  <!-- PAGE 1 · HOME -->
+  <section class="page active" data-page="home">
+    <div class="page-inner home">
+      <div class="home-copy">
+        <p class="eyebrow rise" style="--i:0">Winter 2026 · Fine Jewellery</p>
+        <h1 class="rise" style="--i:1">Light, set<br>in <em>gold.</em></h1>
+        <p class="lede rise" style="--i:2">Hand-finished rings, pendants and pieces made to be worn every day — and remembered for a lifetime.</p>
+        <div class="cta rise" style="--i:3">
+          <button class="btn primary hv" data-go="collection">Explore collection</button>
+          <button class="btn ghost hv" data-go="product">The ring →</button>
+        </div>
+      </div>
+      <div class="home-art rise" style="--i:2" role="img" aria-label="Diamond solitaire ring on green marble"></div>
+      <ul class="perks rise" style="--i:4">
+        <li><b>Conflict-free</b>Traceable diamonds</li>
+        <li><b>Lifetime care</b>Free cleaning &amp; resizing</li>
+        <li><b>Insured delivery</b>Free worldwide</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- PAGE 2 · COLLECTION -->
+  <section class="page" data-page="collection">
+    <div class="page-inner">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow rise" style="--i:0">Shop</p>
+          <h2 class="rise" style="--i:1" >The <em>Collection</em></h2>
+        </div>
+        <p class="lede rise" style="--i:2">Six pieces. Made slowly, worn forever.</p>
+      </div>
+      <div class="chips rise" style="--i:3">
+        <button class="chip on">All</button><button class="chip">Rings</button><button class="chip">Necklaces</button><button class="chip">Earrings</button>
+      </div>
+      <div class="grid">
+        <a class="card hv rise" style="--i:3" href="#product" data-go="product"><span class="tag">New</span><div class="tile t1"></div><h3>Aurelia Solitaire</h3><p>$2,450</p></a>
+        <a class="card hv rise" style="--i:4" href="#product" data-go="product"><div class="tile t2"></div><h3>Lune Pendant</h3><p>$890</p></a>
+        <a class="card hv rise" style="--i:5" href="#product" data-go="product"><div class="tile t3"></div><h3>Orbit Hoops</h3><p>$640</p></a>
+        <a class="card hv rise" style="--i:6" href="#product" data-go="product"><span class="tag">New</span><div class="tile t4"></div><h3>Vega Bracelet</h3><p>$3,100</p></a>
+        <a class="card hv rise" style="--i:7" href="#product" data-go="product"><div class="tile t5"></div><h3>Halo Eternity Band</h3><p>$1,780</p></a>
+        <a class="card hv rise" style="--i:8" href="#product" data-go="product"><div class="tile t6"></div><h3>Pearl Drops</h3><p>$520</p></a>
+      </div>
+    </div>
+  </section>
+
+  <!-- PAGE 3 · PRODUCT -->
+  <section class="page" data-page="product">
+    <div class="page-inner product">
+      <div class="pdp-art rise" style="--i:0" role="img" aria-label="Aurelia Solitaire ring"></div>
+      <p class="eyebrow rise" style="--i:1">Signature · Rings</p>
+      <h2 class="rise" style="--i:2">The Aurelia<br><em>Solitaire</em></h2>
+      <p class="rating rise" style="--i:3"><i>★★★★★</i> &nbsp;4.9 · 212 reviews</p>
+      <p class="price rise" style="--i:3">$2,450</p>
+      <p class="lede rise" style="--i:4">A 1.0 ct brilliant, claw-set in recycled 18k gold. Hand-finished in our atelier and delivered in a keepsake box.</p>
+      <div class="opt rise" style="--i:5"><h4>Metal</h4><div class="chips">
+        <button class="chip on"><i class="dot" style="--c:#e2b861"></i>Yellow gold</button><button class="chip"><i class="dot" style="--c:#e8b4a0"></i>Rose</button><button class="chip"><i class="dot" style="--c:#d9dde3"></i>Platinum</button></div></div>
+      <div class="opt rise" style="--i:6"><h4>Ring size</h4><div class="chips">
+        <button class="chip">5</button><button class="chip">6</button><button class="chip on">7</button><button class="chip">8</button><button class="chip">9</button></div></div>
+      <div class="cta rise" style="--i:7">
+        <button class="btn primary hv" data-go="collection">Add to bag</button>
+        <button class="btn ghost hv" data-go="home">← Back home</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- Overlay that holds the shards + crack canvas while the transition runs -->
+<div id="shards" hidden></div>
+
+<!-- Demo HUD: sound toggle (OFF by default). Press M to toggle, H to hide. -->
+<div class="hud">
+  <button class="snd" id="snd" aria-pressed="false" aria-label="Toggle glass sound">
+    <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4Z"/><path d="m17 9 4 6m0-6-4 6"/></svg>
+    <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4Z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>
+  </button>
+</div>
+<div class="hint">Click anything · <b>Space</b> next · <b>R</b> reset · <b>M</b> sound · <b>H</b> hide UI</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ───────────────────────── helpers ───────────────────────── */
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const rand  = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const lerp  = (a, b, t) => a + (b - a) * t;
+const TAU = Math.PI * 2;
+
+/* ───────────────────────── tuning knobs ─────────────────────────
+   Everything that controls the "feel" lives here.                  */
+const slow = parseFloat(new URLSearchParams(location.search).get('slow')) || 1;   // ?slow=4 → 4× slower
+const CFG = {
+  crackMs: 130,        // radial crack flash before anything moves (100–150ms feels right)
+  waveMs: 300,         // delay between the nearest and the farthest shard breaking away
+  fallMs: 1150,        // flight time of each shard
+  gravity: 2600,       // px/s²
+  drag: 2.0,           // slows the outward burst so shards then drop
+  perspective: 1100,   // px, vanishing point = click point
+  samples: 16,         // keyframes sampled per shard (physics → WAAPI)
+  buildPerFrame: 5     // shards cloned per frame, so the crack animation never stutters
+};
+const T = ms => ms * slow;
+document.documentElement.style.setProperty('--ts', slow);
+
+/* ───────────────────────── page state ───────────────────────── */
+const app = $('#app'), layer = $('#shards');
+const pages = $$('.page', app), navLinks = $$('.links a', app);
+const ORDER = ['home', 'collection', 'product'];
+const THEME = { home: 'dark', collection: 'light', product: 'wine' };
+let current = 'home', busy = false, job = null;
+
+function setPage(name) {                       // swap which page is visible (instant)
+  current = name;
+  pages.forEach(p => {
+    const on = p.dataset.page === name;
+    p.classList.toggle('active', on);
+    p.classList.remove('settle');
+    if (on) p.scrollTop = 0;
+  });
+  app.dataset.theme = THEME[name];
+  navLinks.forEach(a => a.setAttribute('aria-current', a.dataset.go === name ? 'page' : 'false'));
+}
+function settle() {                            // replay the entrance animation of the active page
+  const p = $('.page.active', app);
+  void p.offsetWidth;                          // restart CSS animations
+  p.classList.add('settle');
+}
+
+/* ───────────────────────── glass geometry ─────────────────────────
+   Voronoi cells from seed points spiralling out of the click point
+   → small shards at the impact, bigger ones toward the edges.       */
+function makeSeeds(n, W, H, ox, oy) {
+  const maxD = Math.max(Math.hypot(ox, oy), Math.hypot(W - ox, oy), Math.hypot(ox, H - oy), Math.hypot(W - ox, H - oy));
+  const seeds = [[ox + rand(-6, 6), oy + rand(-6, 6)]];
+  for (let i = 1; i < n; i++) {
+    const f = i / (n - 1);
+    let r = maxD * Math.pow(f, 0.85) * rand(0.85, 1.1);
+    let a = i * 2.39996 + rand(-0.35, 0.35);             // golden angle = even spread
+    let x = ox + Math.cos(a) * r, y = oy + Math.sin(a) * r;
+    for (let k = 0; k < 14 && (x < 0 || x > W || y < 0 || y > H); k++) {   // keep seeds on screen
+      a = rand(0, TAU); r *= 0.93; x = ox + Math.cos(a) * r; y = oy + Math.sin(a) * r;
+    }
+    x = clamp(x, 0, W); y = clamp(y, 0, H);
+    while (seeds.some(s => Math.hypot(s[0] - x, s[1] - y) < 8)) { x = clamp(x + rand(-14, 14), 0, W); y = clamp(y + rand(-14, 14), 0, H); }
+    seeds.push([x, y]);
+  }
+  return seeds;
+}
+// Keep the part of polygon `poly` that is closer to seed a than to seed b (Sutherland–Hodgman half-plane clip)
+function clipHalf(poly, a, b) {
+  const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, nx = b[0] - a[0], ny = b[1] - a[1];
+  const side = p => (p[0] - mx) * nx + (p[1] - my) * ny;      // <= 0 → on a's side
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length], sp = side(p), sq = side(q);
+    if (sp <= 0) out.push(p);
+    if ((sp < 0 && sq > 0) || (sp > 0 && sq < 0)) { const t = sp / (sp - sq); out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]); }
+  }
+  return out;
+}
+function voronoi(seeds, W, H) {
+  const rect = [[0, 0], [W, 0], [W, H], [0, H]];
+  return seeds.map((s, i) => {
+    let poly = rect;
+    for (let j = 0; j < seeds.length && poly.length > 2; j++) if (j !== i) poly = clipHalf(poly, s, seeds[j]);
+    return poly;
+  });
+}
+function centroid(p) {
+  let a = 0, cx = 0, cy = 0;
+  for (let i = 0; i < p.length; i++) {
+    const [x0, y0] = p[i], [x1, y1] = p[(i + 1) % p.length], f = x0 * y1 - x1 * y0;
+    a += f; cx += (x0 + x1) * f; cy += (y0 + y1) * f;
+  }
+  if (Math.abs(a) < 1e-6) return null;
+  a *= 0.5;
+  return { x: cx / (6 * a), y: cy / (6 * a), area: Math.abs(a) };
+}
+
+/* One shard = polygon + the physics that will drive it */
+function describe(poly, ox, oy, maxD) {
+  const c = centroid(poly);
+  if (!c || c.area < 4) return null;
+  // grow each polygon ~0.8px so neighbours overlap → no hairline seams before they move
+  const g = poly.map(p => { const dx = p[0] - c.x, dy = p[1] - c.y, l = Math.hypot(dx, dy) || 1; return [p[0] + dx / l * 0.8, p[1] + dy / l * 0.8]; });
+  const xs = g.map(p => p[0]), ys = g.map(p => p[1]);
+  const x0 = Math.floor(Math.min(...xs)), y0 = Math.floor(Math.min(...ys));
+  const w = Math.ceil(Math.max(...xs)) - x0, h = Math.ceil(Math.max(...ys)) - y0;
+
+  const dx = c.x - ox, dy = c.y - oy, d = Math.hypot(dx, dy), nd = clamp(d / maxD, 0, 1);
+  let ux = dx / (d || 1), uy = dy / (d || 1);
+  if (d < 2) { const a = rand(0, TAU); ux = Math.cos(a); uy = Math.sin(a); }
+  const mass = clamp(c.area / 60000, 0, 1);                       // big shards are lazier
+  const speed = lerp(1500, 620, Math.pow(nd, 0.8)) * lerp(1.1, 0.75, mass) * rand(0.8, 1.2);
+  const spin = lerp(1.4, 0.55, mass);
+  return {
+    poly, x0, y0, w, h, cx: c.x, cy: c.y,
+    local: g.map(p => [p[0] - x0, p[1] - y0]),
+    delay: Math.pow(nd, 0.9) * CFG.waveMs + rand(0, 35),          // nearest shards go first
+    vx: ux * speed, vy: uy * speed - rand(180, 520) * (1 - nd) * (1 - mass * 0.5),
+    vz: lerp(720, 60, nd) * rand(0.6, 1.3),                       // centre shards burst toward the viewer
+    wx: rand(-260, 260) * spin, wy: rand(-260, 260) * spin, wz: rand(-300, 300) * spin,
+    sheen: Math.round(rand(0, 360))
+  };
+}
+// Sample projectile motion (outward burst with drag + gravity) into WAAPI keyframes
+function keyframes(s) {
+  const Ts = CFG.fallMs / 1000, kf = [];
+  for (let k = 0; k <= CFG.samples; k++) {
+    const t = k / CFG.samples * Ts;
+    const f = (1 - Math.exp(-CFG.drag * t)) / CFG.drag;
+    const x = s.vx * f, y = s.vy * f + 0.5 * CFG.gravity * t * t, z = s.vz * f;
+    const fade = clamp((t / Ts - 0.42) / 0.58, 0, 1);
+    kf.push({
+      transform: `translate3d(${x.toFixed(1)}px,${y.toFixed(1)}px,${z.toFixed(1)}px) rotateX(${(s.wx * t).toFixed(1)}deg) rotateY(${(s.wy * t).toFixed(1)}deg) rotateZ(${(s.wz * t).toFixed(1)}deg)`,
+      opacity: (1 - fade * fade).toFixed(3)
+    });
+  }
+  return kf;
+}
+
+/* ───────────────────────── crack lines (canvas) ─────────────────────────
+   Every Voronoi edge is a crack, plus a few long radial spokes.
+   Cracks are revealed outward from the click over `crackMs`.          */
+function crackSegments(shards, W, H, ox, oy, maxD) {
+  const segs = [], seen = new Set();
+  const dist = (x, y) => Math.hypot(x - ox, y - oy);
+  const onBorder = (p, q) => (p[0] < .5 && q[0] < .5) || (p[0] > W - .5 && q[0] > W - .5) || (p[1] < .5 && q[1] < .5) || (p[1] > H - .5 && q[1] > H - .5);
+  const line = (a, b) => {                                   // jagged polyline between two points
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.max(1, Math.round(len / 28));
+    const nx = -(b[1] - a[1]) / (len || 1), ny = (b[0] - a[0]) / (len || 1);
+    let prev = a;
+    for (let i = 1; i <= n; i++) {
+      let p = [lerp(a[0], b[0], i / n), lerp(a[1], b[1], i / n)];
+      if (i < n) { const j = rand(-1.6, 1.6); p = [p[0] + nx * j, p[1] + ny * j]; }
+      segs.push({ x1: prev[0], y1: prev[1], x2: p[0], y2: p[1], d: Math.min(dist(prev[0], prev[1]), dist(p[0], p[1])) });
+      prev = p;
+    }
+  };
+  shards.forEach(s => s.poly.forEach((p, i) => {
+    const q = s.poly[(i + 1) % s.poly.length];
+    if (onBorder(p, q)) return;
+    const k = [p, q].map(v => Math.round(v[0]) + '_' + Math.round(v[1])).sort().join('|');
+    if (seen.has(k)) return; seen.add(k);                    // shared edge: draw once
+    line(p, q);
+  }));
+  for (let k = 0; k < 13; k++) {                             // radial spokes from the impact
+    let a = k / 13 * TAU + rand(-.25, .25), x = ox, y = oy, len = 0;
+    const L = maxD * rand(.3, .85);
+    while (len < L && x > -20 && x < W + 20 && y > -20 && y < H + 20) {
+      const step = rand(18, 34); a += rand(-.18, .18);
+      const nx = x + Math.cos(a) * step, ny = y + Math.sin(a) * step;
+      segs.push({ x1: x, y1: y, x2: nx, y2: ny, d: len }); x = nx; y = ny; len += step;
+    }
+  }
+  const bins = [{ w: 2.0, segs: [] }, { w: 1.4, segs: [] }, { w: 0.9, segs: [] }];   // thicker near the impact
+  segs.forEach(s => bins[s.d / maxD < .2 ? 0 : s.d / maxD < .5 ? 1 : 2].segs.push(s));
+  return bins;
+}
+
+/* ───────────────────────── snapshot of the current screen ─────────────────────────
+   Deep-clone #app (only the visible page), freeze its scroll position and hover state,
+   and remove anything that would restart/jump when cloned.                          */
+function makeSnapshot(W, H) {
+  const base = app.cloneNode(true);
+  const oh = $$('.hv', app), ch = $$('.hv', base);           // copy :hover → .is-hover so buttons don't "un-hover"
+  oh.forEach((n, i) => { if (n.matches(':hover')) ch[i].classList.add('is-hover'); });
+  base.removeAttribute('id'); $$('[id]', base).forEach(n => n.removeAttribute('id'));
+  $$('.page:not(.active)', base).forEach(n => n.remove());
+  $$('.settle', base).forEach(n => n.classList.remove('settle'));   // never restart entrance animations in clones
+  const op = $('.page.active', app), cp = $('.page.active', base);
+  cp.style.overflow = 'hidden';
+  $('.page-inner', cp).style.transform = `translateY(${-op.scrollTop}px)`;   // reproduce scroll position
+  base.inert = true; base.setAttribute('aria-hidden', 'true');
+  base.style.cssText = `position:absolute;inset:auto;left:0;top:0;width:${W}px;height:${H}px`;
+  return base;
+}
+
+/* ───────────────────────── the transition ───────────────────────── */
+function shatter(next, ox, oy) {
+  const W = app.clientWidth, H = app.clientHeight;
+  const N = clamp(Math.round(Math.sqrt(W * H) / 20), 24, 36);             // ~24–36 shards depending on screen size
+  const maxD = Math.max(Math.hypot(ox, oy), Math.hypot(W - ox, oy), Math.hypot(ox, H - oy), Math.hypot(W - ox, H - oy));
+
+  const shards = voronoi(makeSeeds(N, W, H, ox, oy), W, H).map(c => describe(c, ox, oy, maxD)).filter(Boolean);
+  const base = makeSnapshot(W, H);
+  const bins = crackSegments(shards, W, H, ox, oy, maxD);
+
+  // overlay + crack canvas
+  layer.replaceChildren(); layer.hidden = false;
+  layer.style.perspective = CFG.perspective + 'px';
+  layer.style.perspectiveOrigin = `${ox}px ${oy}px`;
+  layer.style.transformOrigin = `${ox}px ${oy}px`;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cv = document.createElement('canvas'); cv.className = 'crack';
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  layer.appendChild(cv);
+
+  const me = job = { raf: 0, anims: [] };
+
+  function buildShard(s) {                                   // clip a full-size clone of the screen to this polygon
+    const pts = s.local.map(p => p[0].toFixed(1) + 'px ' + p[1].toFixed(1) + 'px').join(',');
+    const el = document.createElement('div'); el.className = 'shard';
+    el.style.cssText = `left:${s.x0}px;top:${s.y0}px;width:${s.w}px;height:${s.h}px;transform-origin:${s.cx - s.x0}px ${s.cy - s.y0}px;clip-path:polygon(${pts})`;
+    const snap = base.cloneNode(true);
+    snap.style.left = -s.x0 + 'px'; snap.style.top = -s.y0 + 'px';
+    el.appendChild(snap);
+    const fx = document.createElement('div'); fx.className = 'fx';
+    fx.style.background = `linear-gradient(${s.sheen}deg,rgba(255,255,255,.30),rgba(255,255,255,0) 42%,rgba(255,255,255,.14))`;
+    const sp = s.local.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+    fx.innerHTML = `<svg width="${s.w}" height="${s.h}" viewBox="0 0 ${s.w} ${s.h}"><polygon points="${sp}" fill="none" stroke="rgba(0,0,0,.22)" stroke-width="3.4" stroke-linejoin="round"/><polygon points="${sp}" fill="none" stroke="rgba(255,255,255,.8)" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+    el.appendChild(fx);
+    s.el = el; s.fx = fx;
+  }
+
+  function drawCrack(t) {
+    ctx.clearRect(0, 0, W, H);
+    const reach = (1 - Math.pow(1 - t, 2.2)) * maxD * 1.08;   // cracks race outward, easing out
+    const fl = Math.max(0, 1 - t * 1.7);                      // impact flash
+    if (fl > 0) {
+      const g = ctx.createRadialGradient(ox, oy, 0, ox, oy, 240 * (0.4 + t));
+      g.addColorStop(0, `rgba(255,255,255,${0.95 * fl})`); g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = `rgba(255,255,255,${0.10 * fl})`; ctx.fillRect(0, 0, W, H);
+    }
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const bin of bins) {
+      ctx.beginPath(); let any = false;
+      for (const s of bin.segs) if (s.d <= reach) { ctx.moveTo(s.x1, s.y1); ctx.lineTo(s.x2, s.y2); any = true; }
+      if (!any) continue;
+      ctx.strokeStyle = 'rgba(0,0,0,.38)'; ctx.lineWidth = bin.w + 1.8; ctx.stroke();       // dark under-stroke so cracks read on light pages too
+      ctx.strokeStyle = 'rgba(255,255,255,.95)'; ctx.lineWidth = bin.w; ctx.stroke();
+    }
+  }
+
+  function start() {                                          // crack done → release the shards
+    settle();                                                 // new page (already underneath) plays its entrance
+    shards.forEach(s => {
+      const opt = { duration: T(CFG.fallMs), delay: T(s.delay), fill: 'both', easing: 'linear' };
+      me.anims.push(s.el.animate(keyframes(s), opt));         // transform + opacity only → compositor-driven, 60fps
+      s.fx.animate([{ opacity: 0 }, { opacity: 1 }], { duration: T(90), delay: T(s.delay), fill: 'both' });
+    });
+    cv.animate([{ opacity: 1 }, { opacity: 0 }], { duration: T(200), fill: 'forwards' });
+    sfx.shatter(shards.map(s => s.delay));
+    Promise.all(me.anims.map(a => a.finished)).then(() => {
+      if (job !== me) return;
+      layer.replaceChildren(); layer.hidden = true; busy = false; job = null;
+    }, () => {});
+  }
+
+  // tiny "impact punch" on the whole overlay during the crack
+  layer.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.014)' }, { transform: 'scale(1)' }], { duration: T(CFG.crackMs), easing: 'ease-out' });
+
+  let built = 0, swappedAt = -1, frame = 0;
+  const t0 = performance.now();
+  (function loop() {
+    const now = performance.now();
+    if (built < shards.length) {                              // 1) build shards a few per frame
+      const frag = document.createDocumentFragment();
+      for (let i = 0; i < CFG.buildPerFrame && built < shards.length; i++) { buildShard(shards[built]); frag.appendChild(shards[built++].el); }
+      layer.appendChild(frag);
+    } else if (swappedAt < 0) {                               // 2) once everything is covered, swap the page underneath
+      setPage(next); swappedAt = frame;
+    }
+    const t = clamp((now - t0) / T(CFG.crackMs), 0, 1);       // 3) crack flash
+    drawCrack(t);
+    if (t >= 1 && swappedAt >= 0 && frame > swappedAt) return start();   // 4) one frame after the swap, shatter
+    frame++; me.raf = requestAnimationFrame(loop);
+  })();
+}
+
+function go(name, x, y) {
+  if (busy || !ORDER.includes(name)) return;
+  busy = true;
+  sfx.crack();
+  shatter(name, x, y);
+}
+function abort() {                                            // used by R: kill any running transition
+  if (job) { cancelAnimationFrame(job.raf); job.anims.forEach(a => a.cancel()); }
+  layer.getAnimations().forEach(a => a.cancel());
+  layer.replaceChildren(); layer.hidden = true; busy = false; job = null;
+}
+function reset() { abort(); setPage('home'); settle(); }
+function next() {                                             // Space: next page, impact somewhere near the middle
+  const W = app.clientWidth, H = app.clientHeight;
+  go(ORDER[(ORDER.indexOf(current) + 1) % ORDER.length], W * rand(.32, .68), H * rand(.36, .58));
+}
+
+/* ───────────────────────── glass sound (WebAudio, no files) ───────────────────────── */
+const sfx = (() => {
+  let ac = null, out = null, noise = null, on = false;
+  const init = () => {
+    if (!ac) {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+      ac = new AC(); out = ac.createGain(); out.gain.value = 0.6;
+      const comp = ac.createDynamicsCompressor(); out.connect(comp); comp.connect(ac.destination);
+      const n = ac.sampleRate * 0.5 | 0; noise = ac.createBuffer(1, n, ac.sampleRate);
+      const d = noise.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    }
+    if (ac.state === 'suspended') ac.resume();
+  };
+  const burst = (t, dur, freq, q, gain, type = 'bandpass') => {        // filtered noise tick
+    const s = ac.createBufferSource(); s.buffer = noise; s.playbackRate.value = rand(.8, 1.3);
+    const f = ac.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = ac.createGain(); g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+    s.connect(f); f.connect(g); g.connect(out); s.start(t, rand(0, .2)); s.stop(t + dur + .02);
+  };
+  const ping = (t, f, gain, dur) => [1, 2.76, 5.4].forEach((m, i) => {   // inharmonic partials = glassy "tink"
+    if (f * m > 16000) return;                                   // keep partials below Nyquist
+    const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = f * m * rand(.995, 1.005);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain / (i * 1.8 + 1), t + .002);
+    g.gain.exponentialRampToValueAtTime(.0001, t + dur / (i + 1));
+    o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + .05);
+  });
+  return {
+    toggle() { on = !on; if (on) init(); return on; },
+    crack() {                                                           // impact: snap + thud + spidery crackle
+      if (!on || !ac) return; const t = ac.currentTime;
+      burst(t, .09, 5200, .7, .9, 'highpass');
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(42, t + .16);
+      g.gain.setValueAtTime(.5, t); g.gain.exponentialRampToValueAtTime(.0001, t + .2);
+      o.connect(g); g.connect(out); o.start(t); o.stop(t + .22);
+      let tt = t + .01; for (let i = 0; i < 7; i++) { tt += rand(.01, .03) * slow; burst(tt, .025, rand(3000, 8000), 2, rand(.25, .5)); }
+    },
+    shatter(delays) {                                                   // shards breaking free + tinkling fall
+      if (!on || !ac) return; const t = ac.currentTime;
+      delays.forEach(d => { const at = t + d / 1000 * slow; burst(at, .05, rand(4000, 9000), 1.5, .3); if (Math.random() < .7) ping(at + rand(0, .05), rand(2200, 7200), rand(.025, .06), rand(.12, .4)); });
+      for (let i = 0; i < 10; i++) ping(t + rand(.35, 1.3) * slow, rand(2600, 8000), rand(.015, .04), rand(.1, .3));
+    }
+  };
+})();
+const snd = $('#snd');
+const toggleSound = () => snd.setAttribute('aria-pressed', String(sfx.toggle()));
+snd.addEventListener('click', toggleSound);
+
+/* ───────────────────────── input ───────────────────────── */
+document.addEventListener('click', e => {
+  const chip = e.target.closest('.chip');                     // chips just toggle (no transition)
+  if (chip) { $$('.chip', chip.parentElement).forEach(c => c.classList.toggle('on', c === chip)); return; }
+  const el = e.target.closest('[data-go]');
+  if (!el) return;
+  e.preventDefault();
+  let x = e.clientX, y = e.clientY;
+  if (e.detail === 0) { const r = el.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top + r.height / 2; }   // keyboard activation
+  go(el.dataset.go, x, y);
+});
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) { document.activeElement && document.activeElement.blur(); next(); } }
+  else if (e.key === 'r' || e.key === 'R') reset();
+  else if (e.key === 'm' || e.key === 'M') toggleSound();
+  else if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('clean');
+});
+addEventListener('keyup', e => { if (e.code === 'Space') e.preventDefault(); });
+
+/* First load: play the entrance once. */
+setPage('home');
+const PHOTOS = ['hero', 'product', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6'].map(n => `img/${n}.webp`);
+Promise.all(PHOTOS.map(u => { const i = new Image(); i.src = u; return i.decode().catch(() => {}); }))
+  .then(() => { app.classList.add('ready'); settle(); });   // decode first → the first shatter never waits on an image
+
+/* Tip: before shipping this on a real site, add a prefers-reduced-motion fallback (simple fade). */
+})();
+</script>
+</body>
+</html>
